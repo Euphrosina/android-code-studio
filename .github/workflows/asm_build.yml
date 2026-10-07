@@ -75,17 +75,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Create local.properties
+      # SECURITY FIX: the signing keystore is no longer taken from the
+      # repository (signing/signing-key.jks is removed from git). CI must
+      # provide the keystore as a base64-encoded GitHub secret
+      # (SIGNING_KEY_BASE64). Without it, the build falls back to an
+      # unsigned APK — it never signs with a publicly visible key.
+      - name: Decode signing keystore
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
         run: |
-          echo "signing.storeFile=signing/signing-key.jks" >> local.properties
-          echo "signing.storePassword=${{ secrets.SIGNING_SK_PASSWORD }}" >> local.properties
-          echo "signing.keyAlias=androidcs" >> local.properties
-          echo "signing.keyPassword=${{ secrets.SIGNING_SK_PASSWORD }}" >> local.properties
+          if [ -n "$SIGNING_KEY_BASE64" ]; then
+            echo "$SIGNING_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/signing.jks"
+            echo "ACS_STORE_FILE=$RUNNER_TEMP/signing.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No SIGNING_KEY_BASE64 secret set — build will be unsigned."
+          fi
 
       - name: Assemble APK
         env:
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || secrets.SIGNING_SK_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || secrets.SIGNING_SK_PASSWORD }}
+          ACS_KEY_ALIAS: ${{ secrets.ACS_KEY_ALIAS || 'androidcs' }}
         run: ./gradlew assemble${{ env.BUILD_TYPE }}
 
       - name: List APK files

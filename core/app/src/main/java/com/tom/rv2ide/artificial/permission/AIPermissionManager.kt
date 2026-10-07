@@ -19,6 +19,7 @@ package com.tom.rv2ide.artificial.permissions
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.io.File
 
 /*
  * @author Mohammed-baqer-null @ https://github.com/Mohammed-baqer-null
@@ -130,18 +131,43 @@ class AIPermissionManager(private val context: Context) {
     /**
      * Checks if the given file path is allowed based on configured write settings and allowed directories.
      *
+     * SECURITY FIX: the check now canonicalizes the path before matching and
+     * requires the path to be INSIDE an allowed directory (strict
+     * parent-directory prefix match). The previous implementation used a
+     * plain string [String.startsWith] comparison, which could be bypassed
+     * with sibling directories (e.g. allowed `/a/proj` matching `/a/projectX`)
+     * and with `../` traversal segments.
+     *
      * @param filePath The file path to check.
      * @return `true` if the path is allowed, `false` otherwise.
      */
     // Check if a file path is allowed
     fun isPathAllowed(filePath: String): Boolean {
         if (!isFileWriteEnabled()) return false
-        
+
         val allowedDirs = getAllowedDirectories()
         if (allowedDirs.isEmpty()) return false
-        
+
+        // Reject traversal segments early, before any filesystem access.
+        val normalized = try {
+            File(filePath).canonicalPath
+        } catch (e: java.io.IOException) {
+            return false
+        }
+        if (normalized != filePath && filePath.contains("..")) {
+            // Canonical form differs and the raw path contains traversal
+            // segments — treat as hostile.
+            return false
+        }
+
         return allowedDirs.any { allowedDir ->
-            filePath.startsWith(allowedDir)
+            val dir = try {
+                File(allowedDir).canonicalPath
+            } catch (e: java.io.IOException) {
+                return@any false
+            }
+            // Strict containment: normalized must equal dir or live under it.
+            normalized == dir || normalized.startsWith(dir + File.separator)
         }
     }
 

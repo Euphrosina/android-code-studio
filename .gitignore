@@ -11,7 +11,15 @@ crowdin.properties
 .idea/crowdin_settings.xml
 
 # Downloaded signing key
-#signing-key.jks
+# SECURITY FIX: keystores must never be committed. The previously committed
+# signing/signing-key.jks and core/app/dev.keystore are removed from the index.
+# They remain in git history and MUST be rotated + history-rewritten upstream.
+signing-key.jks
+signing/*.jks
+signing/*.keystore
+core/app/dev.keystore
+core/app/*.jks
+core/app/*.keystore
 
 # Built application files
 *.apk
@@ -68,9 +76,9 @@ captures/
 .idea/studiobot.xml
 
 # Keystore files
-# Uncomment the following lines if you do not want to check your keystore files in.
-#*.jks
-#*.keystore
+# SECURITY FIX: enabled — never commit keystore files.
+*.jks
+*.keystore
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild
@@ -103,7 +111,7 @@ lint/tmp/
 
 # R
 scripts/
-# signing/
+signing/
 # local.properties
 build.log
 .androidide

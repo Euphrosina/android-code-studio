@@ -62,9 +62,21 @@ class AIFileWriter(private val context: Context) {
             return FileWriteResult.Error("Failed to create directories: ${e.message}")
         }
 
+        // SECURITY FIX (defense in depth): re-verify the canonical destination
+        // right before writing, so that path traversal resolved only after
+        // mkdirs() can never escape the allowed directories.
+        val canonicalFile = try {
+            file.canonicalFile
+        } catch (e: IOException) {
+            return FileWriteResult.Error("Failed to resolve path: ${e.message}")
+        }
+        if (!permissionManager.isPathAllowed(canonicalFile.absolutePath)) {
+            return FileWriteResult.PermissionDenied("Path escapes allowed directories")
+        }
+
         // Backup existing file
-        if (file.exists() && createBackup && permissionManager.isAutoBackupEnabled()) {
-            val backupResult = createBackup(file)
+        if (canonicalFile.exists() && createBackup && permissionManager.isAutoBackupEnabled()) {
+            val backupResult = createBackup(canonicalFile)
             if (backupResult is FileWriteResult.Error) {
                 return backupResult
             }
@@ -72,8 +84,8 @@ class AIFileWriter(private val context: Context) {
 
         // Write the file
         return try {
-            file.writeText(content)
-            FileWriteResult.Success(filePath, backupCreated = createBackup && file.exists())
+            canonicalFile.writeText(content)
+            FileWriteResult.Success(canonicalFile.absolutePath, backupCreated = createBackup && canonicalFile.exists())
         } catch (e: IOException) {
             FileWriteResult.Error("Failed to write file: ${e.message}")
         } catch (e: SecurityException) {

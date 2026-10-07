@@ -45,6 +45,13 @@ class TomIDEUpdater(private val context: Context) {
     private const val UPDATE_JSON_URL =
         "https://raw.githubusercontent.com/AndroidCSOfficial/android-code-studio/refs/heads/dev/updater.json"
     private const val DOWNLOAD_NOTIFICATION_ID = 1001
+
+    // SECURITY FIX: update APKs may only be fetched over HTTPS from trusted
+    // GitHub hosts. updater.json lives on a git branch, so a compromised
+    // upstream repo could otherwise point apkUrl at an arbitrary server.
+    // Redirects are followed, but they must originate from these hosts.
+    private val ALLOWED_APK_HOSTS =
+        setOf("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
   }
 
   data class ArchVariant(val versionCode: Int, val versionName: String, val apkUrl: String)
@@ -359,6 +366,13 @@ class TomIDEUpdater(private val context: Context) {
     return withContext(Dispatchers.IO) {
       try {
         val url = URL(apkUrl)
+
+        // SECURITY FIX: enforce HTTPS + host allowlist before connecting.
+        if (url.protocol != "https" || url.host !in ALLOWED_APK_HOSTS) {
+          Log.e(TAG, "Blocked update download from untrusted host: ${url.host}")
+          return@withContext null
+        }
+
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.connectTimeout = 30000
@@ -412,6 +426,14 @@ class TomIDEUpdater(private val context: Context) {
 
   private fun installApk(apkFile: File) {
     try {
+      // SECURITY FIX: refuse to install an update whose signing certificate
+      // does not match the currently installed app. A mismatching signature
+      // means the APK was not signed with the official key (e.g. a tampered
+      // or replaced release artifact).
+      if (!verifyApkSignature(apkFile)) {
+        throw SecurityException("Update APK signature does not match the installed app")
+      }
+
       val intent = Intent(Intent.ACTION_VIEW)
 
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -427,6 +449,36 @@ class TomIDEUpdater(private val context: Context) {
       context.startActivity(intent)
     } catch (e: Exception) {
       Log.e(TAG, context.getString(R.string.updater_install_error), e)
+    }
+  }
+
+  /**
+   * SECURITY FIX: compares the signing certificate of the downloaded update
+   * APK with the certificate of the currently installed app. Returns false
+   * when they do not match (or signatures cannot be read), in which case the
+   * update must not be installed.
+   */
+  @Suppress("DEPRECATION")
+  private fun verifyApkSignature(apkFile: File): Boolean {
+    return try {
+      val installedInfo =
+          context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+      val apkInfo =
+          context.packageManager.getPackageArchiveInfo(
+              apkFile.absolutePath, PackageManager.GET_SIGNATURES)
+              ?: return false
+
+      val installedSigs = installedInfo.signatures ?: return false
+      val apkSigs = apkInfo.signatures ?: return false
+      if (installedSigs.isEmpty() || apkSigs.isEmpty()) return false
+
+      installedSigs.size == apkSigs.size &&
+          installedSigs.sortedBy { it.toCharsString() }.zip(
+                  apkSigs.sortedBy { it.toCharsString() })
+              .all { (a, b) -> a.toCharsString() == b.toCharsString() }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to verify update APK signature", e)
+      false
     }
   }
 

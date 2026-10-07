@@ -73,19 +73,29 @@ android {
   experimentalProperties["android.experimental.enableGlobalSynthetics"] = true
   
 
-  signingConfigs {
+  // SECURITY FIX: the release keystore (signing/signing-key.jks) was committed
+  // to this repository. A public keystore can be brute-forced offline and used
+  // to sign malicious "official" update packages that install without friction.
+  //
+  // New policy:
+  // 1. Keystores must NEVER be committed (enforced by .gitignore).
+  // 2. CI / release builds provide the keystore via ACS_STORE_FILE (absolute
+  //    path, e.g. decoded from a base64 GitHub secret) plus
+  //    SIGNING_STORE_PASSWORD / ACS_KEY_ALIAS / SIGNING_KEY_PASSWORD.
+  // 3. Local builds without those variables fall back to the standard debug
+  //    keystore (debug) / unsigned APK (release).
+  val envStoreFile = System.getenv("ACS_STORE_FILE")?.takeIf { it.isNotBlank() }?.let(::File)
+  val useEnvSigning = envStoreFile != null && envStoreFile!!.isFile
+
+  if (useEnvSigning) {
+    signingConfigs {
       create("custom") {
-          val keyStorePath = "${rootProject.projectDir}/signing/signing-key.jks"
-          val keyStoreFile = file(keyStorePath)
-          
-          val signing_storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: ""
-          val signing_keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: ""
-          
-          storeFile = keyStoreFile
-          storePassword = signing_storePassword
-          keyAlias = "androidcs"
-          keyPassword = signing_keyPassword
+          storeFile = envStoreFile
+          storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: ""
+          keyAlias = System.getenv("ACS_KEY_ALIAS") ?: "androidcs"
+          keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: ""
       }
+    }
   }
 
   androidResources { generateLocaleConfig = true }
@@ -97,12 +107,16 @@ android {
 
   buildTypes {
     debug {
-      signingConfig = signingConfigs.getByName("custom")
+      if (useEnvSigning) {
+        signingConfig = signingConfigs.getByName("custom")
+      }
     }
 
     release {
       isShrinkResources = false
-      signingConfig = signingConfigs.getByName("custom")
+      if (useEnvSigning) {
+        signingConfig = signingConfigs.getByName("custom")
+      }
     }
   }
   
@@ -194,7 +208,7 @@ dependencies {
   implementation(projects.external.atc) 
   implementation(libs.external.customizable.cardview)
   implementation(projects.external.logwire)
-	implementation(libs.external.seasonal.effects)
+        implementation(libs.external.seasonal.effects)
   
   // Annotation processors
   kapt(libs.common.glide.ap)
